@@ -6,7 +6,10 @@ from __future__ import unicode_literals, absolute_import
 from binascii import hexlify
 from struct import pack
 
+from six import python_2_unicode_compatible
 
+
+@python_2_unicode_compatible
 class Notification(object):
     """
     An internal representation of a single notification to send.
@@ -23,6 +26,9 @@ class Notification(object):
         self.encoded_token = encoded_token
         self.ident = ident
 
+    def __str__(self):
+        return "{0} -> {1}".format(self.message._encoded_payload, self.token)
+
     @property
     def token(self):
         """
@@ -31,7 +37,7 @@ class Notification(object):
         :rtype: str
 
         """
-        hexlify(self.encoded_token)
+        return hexlify(self.encoded_token)
 
     def frame(self):
         """

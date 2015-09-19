@@ -26,8 +26,8 @@ class Backend(base.Backend):
     def start(self, queue, daemon=True):
         self.queue_cond = Condition()
 
-        thread = ReadThread(self, self.environment, self.cert_path, self.key_path, queue, self.queue_cond)
-        thread.deamon = daemon
+        thread = ReadThread(self, self.environment, self.key_path, self.cert_path, queue, self.queue_cond)
+        thread.setDaemon(daemon)
         thread.start()
 
     def start_feedback(self, callback):
@@ -100,7 +100,6 @@ class ReadThread(Thread):
                 self.reset()
 
             if buf is not None:
-                logger.debug("Received error response from APNs push service.")
                 self.handle_response_data(buf)
         except socket.error as e:
             logger.info("Socket error while reading: {0}.".format(e))
@@ -108,8 +107,6 @@ class ReadThread(Thread):
             logger.warning("Exception while reading: {0}".format(e))
 
     def reset(self):
-        logger.debug("Resetting connection.")
-
         self.connection.close()
         self.stop_writing()
 
@@ -129,6 +126,7 @@ class ReadThread(Thread):
             notification = self.queue.backtrack(ident, inclusive=is_shutdown)
             if (notification is not None) and (not is_shutdown):
                 error = apns.Error(status, notification.message, notification.token)
+                logger.debug("Received response from push service: {0}".format(error))
                 self.backend.delivery_error(error)
 
 
@@ -167,6 +165,7 @@ class WriteThread(Thread):
     def send_more_notifications(self):
         notification = self.wait_for_notification()
         if notification is not None:
+            logger.debug("Sending {0}".format(notification))
             self.connection.sendall(notification.frame())
 
     def wait_for_notification(self):
@@ -201,11 +200,11 @@ class FeedbackThread(Thread):
     the other end.
 
     """
-    def __init__(self, cert_path, key_path, environment, callback):
+    def __init__(self, key_path, cert_path, environment, callback):
         super(FeedbackThread, self).__init__()
 
-        self.cert_path = cert_path
         self.key_path = key_path
+        self.cert_path = cert_path
         self.environment = environment
         self.callback = callback
 
@@ -223,8 +222,8 @@ class Connection(object):
     """
     def __init__(self, address, key_path, cert_path):
         self.address = address
-        self.cert_path = cert_path
         self.key_path = key_path
+        self.cert_path = cert_path
 
         self.lock = RLock()
         self._sock = None
@@ -242,6 +241,7 @@ class Connection(object):
         with self.lock:
             if self._sock is not None:
                 try:
+                    logger.debug("Closing connection to {0}.".format(self.address))
                     self._sock.close()
                 finally:
                     self._sock = None
@@ -250,8 +250,12 @@ class Connection(object):
     def sock(self):
         with self.lock:
             if self._sock is None:
+                logger.debug("Opening connection to {0}.".format(self.address))
                 sock = socket.create_connection(self.address)
-                sock = ssl.wrap_socket(sock, self.key_path, self.cert_path, ca_certs=self.ca_certs())
+                sock = ssl.wrap_socket(
+                    sock, self.key_path, self.cert_path,
+                    ssl_version=ssl.PROTOCOL_TLSv1, ca_certs=self.ca_certs()
+                )
                 self._sock = sock
 
         return self._sock

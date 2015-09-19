@@ -7,9 +7,11 @@ import argparse
 import logging
 import logging.config
 import os.path
-import sys
 
 from apns_worker.apns import ApnsManager, Message  # noqa
+
+
+logger = logging.getLogger('apns_worker')
 
 
 apns = None
@@ -31,14 +33,13 @@ def main():
 
     _init_logging(args)
 
-    apns = ApnsManager(args.cert_path, args.key_path, args.environment,
-                       error_handler=print_error)
+    apns = ApnsManager(args.key_path, args.cert_path, args.environment)
 
 
 def _init_logging(args):
-    if args.verbose > 2:
+    if args.verbose >= 2:
         loglevel = 'DEBUG'
-    elif args.verbose > 1:
+    elif args.verbose == 1:
         loglevel = 'INFO'
     else:
         loglevel = 'WARNING'
@@ -62,10 +63,6 @@ def _init_logging(args):
             }
         }
     )
-
-
-def print_error(error):
-    print(unicode(error), file=sys.stderr)
 
 
 if __name__ == '__main__':
