@@ -1,0 +1,72 @@
+#!/usr/bin/env python -i
+
+from __future__ import print_function, absolute_import, unicode_literals
+
+
+import argparse
+import logging
+import logging.config
+import os.path
+import sys
+
+from apns_worker.apns import ApnsManager, Message  # noqa
+
+
+apns = None
+
+
+def main():
+    global apns
+
+    def path(value):
+        return os.path.expanduser(value)
+
+    parser = argparse.ArgumentParser(description='Set up an interactive APNs environment.')
+    parser.add_argument('key_path', type=path, help="Path to your APNs client key.")
+    parser.add_argument('cert_path', type=path, help="Path to your APNs client certificate.")
+    parser.add_argument('--production', '-p', action='store_const', const='production', dest='environment', default='sandbox', help="Use the production APNs endpoint.")
+    parser.add_argument('--verbose', '-v', action='count')
+
+    args = parser.parse_args()
+
+    _init_logging(args)
+
+    apns = ApnsManager(args.cert_path, args.key_path, args.environment,
+                       error_handler=print_error)
+
+
+def _init_logging(args):
+    if args.verbose > 2:
+        loglevel = 'DEBUG'
+    elif args.verbose > 1:
+        loglevel = 'INFO'
+    else:
+        loglevel = 'WARNING'
+
+    logging.config.dictConfig(
+        {
+            'version': 1,
+            'disable_existing_loggers': False,
+            'handlers': {
+                'console': {
+                    'class': 'logging.StreamHandler',
+                    'level': loglevel,
+                }
+            },
+            'loggers': {
+                'apns_worker': {
+                    'level': loglevel,
+                    'handlers': ['console'],
+                    'propagate': False
+                }
+            }
+        }
+    )
+
+
+def print_error(error):
+    print(unicode(error), file=sys.stderr)
+
+
+if __name__ == '__main__':
+    main()
