@@ -69,6 +69,38 @@ class QueueTestCase(unittest.TestCase):
         self.assertEqual(self.queue._next, 2)
         self.assertTrue(all(item.expires is not None for item in self.queue._queue))
 
+    def test_unclaim_empty(self):
+        message = Message([_token1, _token2], {})
+        ok = self.queue.unclaim(next(message.notifications()))
+
+        self.assertFalse(ok)
+        self.assertEqual(len(self.queue._queue), 0)
+        self.assertEqual(self.queue._next, 0)
+
+    def test_unclaim_last(self):
+        message = Message([_token1, _token2], {})
+
+        self.queue.append(message)
+        self.queue.claim()
+        notif = self.queue.claim()
+        ok = self.queue.unclaim(notif)
+
+        self.assertTrue(ok)
+        self.assertEqual(len(self.queue._queue), 2)
+        self.assertEqual(self.queue._next, 1)
+
+    def test_unclaim_invalid(self):
+        message = Message([_token1, _token2], {})
+
+        self.queue.append(message)
+        notif = self.queue.claim()
+        self.queue.claim()
+        ok = self.queue.unclaim(notif)
+
+        self.assertFalse(ok)
+        self.assertEqual(len(self.queue._queue), 2)
+        self.assertEqual(self.queue._next, 2)
+
     def test_backtrack_empty(self):
         self.queue.backtrack(0)
 
@@ -146,6 +178,20 @@ class QueueTestCase(unittest.TestCase):
         self.assertEqual(len(self.queue._queue), 0)
         self.assertEqual(self.queue._next, 0)
         self.assertEqual(delay, self.queue._grace)
+
+    def test_auto_purge(self):
+        start = datetime(2015, 1, 1)
+        self.queue._auto_purge_at = start + timedelta(seconds=self.queue._grace)
+
+        with Now(start):
+            self.queue.append(Message([_token1], {}))
+            self.queue.claim()
+
+        with Now(start + timedelta(seconds=self.queue._grace + 1)):
+            self.queue.append(Message([_token2], {}))
+
+        self.assertEqual(len(self.queue._queue), 1)
+        self.assertEqual(self.queue._next, 0)
 
     def test_is_empty_new(self):
         self.assertTrue(self.queue.is_empty())

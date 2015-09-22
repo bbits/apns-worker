@@ -22,13 +22,13 @@ class ApnsManager(object):
     notification service and a single queue of notifications to send. For most
     purposes, a single global instance should be sufficient. For high volumes,
     it may be worthwhile to create multiple instances and distribute messages
-    among them.
+    across them.
 
-    :param str cert_path: Path to your PEM-encoded APNs certificate.
-    :param str key_path: Path to the PEM-encoded key that goes with the
-        certificate.
+    :param str key_path: Path to your PEM-encoded APNs client key.
+    :param str cert_path: Path to your PEM-encoded APNs client certificate.
 
     :param str environment: APNs environment: `'sandbox'` or `'production'`.
+
     :param str backend_path: Module path to a subclass of
         :class:`apns_worker.backend.base.Backend`. The backend provides the
         network access and concurrency.
@@ -38,11 +38,12 @@ class ApnsManager(object):
 
     :param error_handler: An optional function to process delivery errors. The
         function should take one argument, which will be an
-        :class:`~apns_worker.apns.ApnsError`.
+        :class:`~apns_worker.apns.Error`.
 
     """
     def __init__(self, key_path, cert_path,
-                 environment='sandbox', backend_path='apns_worker.backend.threaded.Backend',
+                 environment='production',
+                 backend_path='apns_worker.backend.threaded.Backend',
                  message_grace=5, error_handler=None):
 
         self._backend = self._load_backend(backend_path, environment, key_path, cert_path)
@@ -61,6 +62,39 @@ class ApnsManager(object):
     #
     # Client APIs
     #
+
+    def send_aps(self, tokens, alert=None, badge=None, sound=None, content_availble=None, category=None):
+        """
+        A convenience API to send a standard notification.
+
+        If you're sending a simple notification with a standard payload, you
+        can use this shortcut API instead of constructing a :class:`Message`
+        manually. Specify any arguments that you wish to include in the `'aps'`
+        dictionary of the payload.
+
+        :type tokens: list of str
+        :type alert: str or dictionary
+        :type badge: int
+        :type sound: str
+        :type content_available: bool
+        :type category: str
+
+        """
+        aps = {}
+        if alert is not None:
+            aps['alert'] = alert
+        if badge is not None:
+            aps['badge'] = badge
+        if sound is not None:
+            aps['sound'] = sound
+        if content_availble:
+            aps['content-available'] = 1
+        if category is not None:
+            aps['category'] = category
+
+        message = Message(tokens, {'aps': aps})
+
+        return self.send_message(message)
 
     def send_message(self, message):
         """
@@ -116,8 +150,8 @@ class Message(object):
     A single push notification to be sent to one or more devices.
 
     :param list tokens: A list of hex-encoded device tokens.
-    :param dict payload: Payload dictionary. Should include the 'aps' key at
-        minimum.
+    :param dict payload: `Payload dictionary
+        <https://developer.apple.com/library/ios/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Chapters/ApplePushService.html#//apple_ref/doc/uid/TP40008194-CH100-SW1>`_.
     :param datetime expiration: An expiration time (optional). If this is a
         naive datetime, it is assumed to be UTC.
     :param int priority: Notification priority (optional). According to the
@@ -205,7 +239,8 @@ class Error(namedtuple('Error', ['status', 'message', 'token'])):
 
     .. attribute:: status
 
-        The status APNs status code.
+        The `APNs status code
+        <https://developer.apple.com/library/ios/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Chapters/CommunicatingWIthAPS.html#//apple_ref/doc/uid/TP40008194-CH101-SW4>`_.
 
     .. attribute:: description
 

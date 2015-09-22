@@ -56,6 +56,8 @@ class NotificationQueue(object):
         The returned notification is provisionally removed from the queue, but
         can be restored with a timely call to :meth:`backtrack`.
 
+        :rtype: :class:`~apns_worker.data.Notification`.
+
         """
         notification = None
 
@@ -67,6 +69,29 @@ class NotificationQueue(object):
                 self._next += 1
 
         return notification
+
+    def unclaim(self, notification):
+        """
+        Restores the most recently claimed notification to the queue.
+
+        :type notification: :class:`~apns_worker.data.Notification`.
+
+        :returns: `True` if the notification could be unclaimed, `False`
+            otherwise.
+        :rtype: bool
+
+        """
+        with self._backend.queue_lock():
+            success = False
+
+            if self._next > 0:
+                qn = self._queue[self._next - 1]
+                if qn.notification == notification:
+                    qn.expires = None
+                    self._next -= 1
+                    success = True
+
+            return success
 
     def backtrack(self, ident, inclusive=False):
         """
@@ -128,7 +153,7 @@ class NotificationQueue(object):
         """
         with self._backend.queue_lock():
             _now = now()
-            is_expired = lambda queued: queued.is_claimed() and (queued.expires <= _now)
+            is_expired = lambda qn: qn.is_claimed() and (qn.expires <= _now)
 
             while (len(self._queue) > 0) and is_expired(self._queue[0]):
                 self._queue.popleft()

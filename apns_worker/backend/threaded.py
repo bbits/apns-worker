@@ -1,9 +1,11 @@
 from binascii import hexlify
+from copy import copy
 import logging
 import os.path
 import socket
 import ssl
 import struct
+import sys
 from threading import Thread, RLock, Condition
 import time
 
@@ -23,12 +25,25 @@ class Backend(base.Backend):
     This uses Python threads to interact with APNs.
 
     """
-    def start(self, queue, daemon=True):
-        self.queue_cond = Condition()
+    def __init__(self, *args, **kwargs):
+        super(Backend, self).__init__(*args, **kwargs)
 
-        thread = ReadThread(self, self.environment, self.key_path, self.cert_path, queue, self.queue_cond)
-        thread.setDaemon(daemon)
-        thread.start()
+        self.queue_cond = Condition()
+        self.thread = None
+
+    def start(self, queue):
+        self.thread = ReadThread(
+            self, self.environment, self.key_path, self.cert_path,
+            queue, self.queue_cond
+        )
+        self.thread.setDaemon(True)
+        self.thread.start()
+
+    def stop(self):
+        """ This is really just here for tests. """
+        if self.thread is not None:
+            self.thread.terminate(wait=True)
+            self.thread = None
 
     def start_feedback(self, callback):
         pass
@@ -38,9 +53,6 @@ class Backend(base.Backend):
 
     def queue_notify(self):
         self.queue_cond.notify_all()
-
-    def sleep(self, seconds):
-        time.sleep(seconds)
 
 
 class ReadThread(Thread):
@@ -55,9 +67,12 @@ class ReadThread(Thread):
         super(ReadThread, self).__init__()
 
         self.backend = backend
-        self.connection = Connection(self._address(environment), key_path, cert_path)
+        self.connection = _new_connection(self._address(environment), key_path, cert_path)
         self.queue = queue
         self.queue_cond = queue_cond
+
+        self.writer = None
+        self._should_terminate = False
 
     def _address(self, environment):
         if environment == 'production':
@@ -67,14 +82,26 @@ class ReadThread(Thread):
 
         return (host, 2195)
 
+    def terminate(self, wait=True):
+        with self.queue_cond:
+            self._should_terminate = True
+            self.connection.close()
+            self.queue_cond.notify_all()
+
+        if wait:
+            self.join(1)
+            if self.is_alive():
+                logger.warning("Read thread did not terminate cleanly.")
+
     def run(self):
         logger.debug("Read thread starting.")
 
-        while True:
+        while not self._should_terminate:
             try:
                 self.wait_for_notification()
-                self.start_writing()
-                self.wait_for_error()
+                if not self._should_terminate:
+                    self.start_writing()
+                    self.wait_for_error()
             except Exception as e:
                 logger.warning("Uncaught exception in read thread: {0}".format(e))
             finally:
@@ -85,7 +112,7 @@ class ReadThread(Thread):
     def wait_for_notification(self):
         """ Blocks until we have a notification to send. """
         with self.queue_cond:
-            while not self.queue.has_unclaimed():
+            while (not self.queue.has_unclaimed()) and (not self._should_terminate):
                 self.queue_cond.wait()
 
     def start_writing(self):
@@ -97,23 +124,15 @@ class ReadThread(Thread):
             try:
                 buf = self.connection.recv(6)
             finally:
-                self.reset()
+                self.connection.close()
+                self.stop_writing(wait=True)
 
-            if buf is not None:
+            if len(buf) >= 6:
                 self.handle_response_data(buf)
         except socket.error as e:
             logger.info("Socket error while reading: {0}.".format(e))
         except Exception as e:
             logger.warning("Exception while reading: {0}".format(e))
-
-    def reset(self):
-        self.connection.close()
-        self.stop_writing()
-
-    def stop_writing(self):
-        if self.writer is not None:
-            self.writer.terminate(wait=True)
-            self.writer = None
 
     def handle_response_data(self, buf):
         """ Process an error from the service. """
@@ -123,11 +142,21 @@ class ReadThread(Thread):
             logger.warning("Failed to parse APNs response {0}: {1}".format(hexlify(buf), e))
         else:
             is_shutdown = (status == 10)
-            notification = self.queue.backtrack(ident, inclusive=is_shutdown)
+            notification = self.queue.backtrack(ident)
             if (notification is not None) and (not is_shutdown):
                 error = apns.Error(status, notification.message, notification.token)
                 logger.debug("Received response from push service: {0}".format(error))
                 self.backend.delivery_error(error)
+
+    def reset(self):
+        self.connection.close()
+        self.stop_writing(wait=False)
+        self.connection = copy(self.connection)
+
+    def stop_writing(self, wait=False):
+        if self.writer is not None:
+            self.writer.terminate(wait=wait)
+            self.writer = None
 
 
 class WriteThread(Thread):
@@ -159,14 +188,22 @@ class WriteThread(Thread):
             logger.info("Socket error while writing {0}.".format(e))
         except Exception as e:
             logger.warning("Exception while writing: {0}".format(e))
+        finally:
+            self.connection.close()
 
         logger.debug("Write thread terminating.")
 
     def send_more_notifications(self):
         notification = self.wait_for_notification()
         if notification is not None:
-            logger.debug("Sending {0}".format(notification))
-            self.connection.sendall(notification.frame())
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Sending {0}".format(notification))
+
+            try:
+                self.connection.sendall(notification.frame())
+            except Exception:
+                self.queue.unclaim(notification)
+                raise
 
     def wait_for_notification(self):
         with self.queue_cond:
@@ -212,12 +249,18 @@ class FeedbackThread(Thread):
         pass
 
 
+def _new_connection(address, key_path, cert_path):
+    """ Mock target. """
+    return Connection(address, key_path, cert_path)
+
+
 class Connection(object):
     """
     A thread-safe read-write connection to the APN service.
 
-    The actual TCP connection is created or recreated as needed. All exceptions
-    are allowed to propagate.
+    The TCP connection will be opened the first time it's needed. Once the
+    connection is closed, it can not be reopened. Use the copy module to create
+    a shallow copy with a new uninitialized socket.
 
     """
     def __init__(self, address, key_path, cert_path):
@@ -227,15 +270,24 @@ class Connection(object):
 
         self.lock = RLock()
         self._sock = None
+        self._closed = False
+
+    def __copy__(self):
+        return self.__class__(self.address, self.key_path, self.cert_path)
 
     def connect(self):
-        return (self.sock is not None)
+        """ Force connection, if necssary. """
+        return (self.sock() is not None)
 
     def recv(self, bufsize):
-        return self.sock.recv(bufsize)
+        sock = self.sock()
+
+        return sock.recv(bufsize) if (sock is not None) else b''
 
     def sendall(self, buf):
-        return self.sock.sendall(buf)
+        sock = self.sock()
+
+        return sock.sendall(buf) if (sock is not None) else 0
 
     def close(self):
         with self.lock:
@@ -246,10 +298,11 @@ class Connection(object):
                 finally:
                     self._sock = None
 
-    @property
+            self._closed = True
+
     def sock(self):
         with self.lock:
-            if self._sock is None:
+            if (self._sock is None) and (not self._closed):
                 logger.debug("Opening connection to {0}.".format(self.address))
                 sock = socket.create_connection(self.address)
                 sock = ssl.wrap_socket(

@@ -11,13 +11,17 @@ class Backend(object):
 
         The APNs environment to talk to (`'sandbox'` or `'production'`).
 
+    .. attribute:: key_path
+
+        Path to our PEM-encoded TLS client key.
+
     .. attribute:: cert_path
 
         Path to our PEM-encoded TLS client certificate.
 
-    .. attribute:: key_path
+    .. attribute:: queue
 
-        Path to our PEM-encoded TLS client key.
+        Our :class:`~apns_worker.queue.NotificationQueue`.
 
     """
     def __init__(self, manager, environment, key_path, cert_path):
@@ -55,18 +59,6 @@ class Backend(object):
 
         This is always called while the object returned by :meth:`queue_lock`
         is acquired, making it compatible with condition variable semantics.
-
-        """
-        raise NotImplementedError()
-
-    def sleep(self, seconds):
-        """
-        Sleep for the given number of seconds.
-
-        This should use a sleep function compatible with the backend's
-        concurrency model.
-
-        :type seconds: float
 
         """
         raise NotImplementedError()
