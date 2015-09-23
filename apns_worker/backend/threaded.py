@@ -5,7 +5,6 @@ import os.path
 import socket
 import ssl
 import struct
-import sys
 from threading import Thread, RLock, Condition
 import time
 
@@ -31,28 +30,31 @@ class Backend(base.Backend):
         self.queue_cond = Condition()
         self.thread = None
 
-    def start(self, queue):
+    def start(self):
         self.thread = ReadThread(
             self, self.environment, self.key_path, self.cert_path,
-            queue, self.queue_cond
+            self.queue, self.queue_cond
         )
         self.thread.setDaemon(True)
         self.thread.start()
 
     def stop(self):
-        """ This is really just here for tests. """
         if self.thread is not None:
             self.thread.terminate(wait=True)
             self.thread = None
 
     def start_feedback(self, callback):
-        pass
+        thread = FeedbackThread(self.environment, self.key_path, self.cert_path, callback)
+        thread.start()
 
     def queue_lock(self):
         return self.queue_cond
 
     def queue_notify(self):
         self.queue_cond.notify_all()
+
+    def sleep(self, seconds):
+        time.sleep(seconds)
 
 
 class ReadThread(Thread):
@@ -122,7 +124,7 @@ class ReadThread(Thread):
     def wait_for_error(self):
         try:
             try:
-                buf = self.connection.recv(6)
+                buf = self.connection.recv_min(6)
             finally:
                 self.connection.close()
                 self.stop_writing(wait=True)
@@ -237,16 +239,47 @@ class FeedbackThread(Thread):
     the other end.
 
     """
-    def __init__(self, key_path, cert_path, environment, callback):
+    def __init__(self, environment, key_path, cert_path, callback):
         super(FeedbackThread, self).__init__()
 
-        self.key_path = key_path
-        self.cert_path = cert_path
-        self.environment = environment
+        self.connection = _new_connection(self._address(environment), key_path, cert_path)
         self.callback = callback
+        self.buf = b''
+
+    def _address(self, environment):
+        if environment == 'production':
+            host = 'feedback.push.apple.com'
+        else:
+            host = 'feedback.sandbox.push.apple.com'
+
+        return (host, 2196)
 
     def run(self):
-        pass
+        logger.debug("Feedback thread starting.")
+
+        while not self.connection.is_closed:
+            self.read_more()
+            self.process_buffer()
+
+        logger.debug("Feedback thread terminating.")
+
+    def read_more(self):
+        more = self.connection.recv()
+        if len(more) > 0:
+            self.buf += more
+        else:
+            self.connection.close()
+
+    def process_buffer(self):
+        feedback, remain = apns.Feedback.parse(self.buf)
+        while feedback is not None:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Received feedback: {0}".format(feedback))
+
+            self.callback(feedback)
+            feedback, remain = apns.Feedback.parse(remain)
+
+        self.buf = remain
 
 
 def _new_connection(address, key_path, cert_path):
@@ -270,7 +303,7 @@ class Connection(object):
 
         self.lock = RLock()
         self._sock = None
-        self._closed = False
+        self._is_closed = False
 
     def __copy__(self):
         return self.__class__(self.address, self.key_path, self.cert_path)
@@ -279,7 +312,32 @@ class Connection(object):
         """ Force connection, if necssary. """
         return (self.sock() is not None)
 
-    def recv(self, bufsize):
+    @property
+    def is_closed(self):
+        return self._is_closed
+
+    def recv_min(self, count):
+        """
+        Reads a specific number of bytes.
+
+        This won't return until the requested bytes are read or the connection
+        is closed.
+
+        :param int count: Minimum bytes to wait for.
+
+        """
+        buf = b''
+
+        while len(buf) < count:
+            more = self.recv(count - len(buf))
+            if len(more) > 0:
+                buf += more
+            else:
+                break
+
+        return buf
+
+    def recv(self, bufsize=4096):
         sock = self.sock()
 
         return sock.recv(bufsize) if (sock is not None) else b''
@@ -298,11 +356,11 @@ class Connection(object):
                 finally:
                     self._sock = None
 
-            self._closed = True
+            self._is_closed = True
 
     def sock(self):
         with self.lock:
-            if (self._sock is None) and (not self._closed):
+            if (self._sock is None) and (not self._is_closed):
                 logger.debug("Opening connection to {0}.".format(self.address))
                 sock = socket.create_connection(self.address)
                 sock = ssl.wrap_socket(

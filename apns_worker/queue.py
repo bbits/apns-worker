@@ -19,14 +19,13 @@ class NotificationQueue(object):
     notification that failed.
 
     :param backend: A :cls:`~apns_worker.backend.base.Backend` to provide
-    synchronization mechanisms.
+        synchronization mechanisms.
 
     :param int grace: Seconds to leave a claimed notification in the queue
         before purging it.
 
     """
-    def __init__(self, backend, grace):
-        self._backend = backend
+    def __init__(self, grace):
         self._grace = grace
 
         self._queue = deque()
@@ -196,6 +195,9 @@ class NotificationQueue(object):
     #
     # Internal
     #
+
+    def _set_backend(self, backend):
+        self._backend = backend
 
     def _auto_purge(self):
         _now = now()

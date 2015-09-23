@@ -7,6 +7,10 @@ class Backend(object):
     and pass them to the superclass. It is preferable to perform initialization
     in the :meth:`start` method.
 
+    .. attribute:: queue
+
+        Our :class:`~apns_worker.queue.NotificationQueue`.
+
     .. attribute:: environment
 
         The APNs environment to talk to (`'sandbox'` or `'production'`).
@@ -19,20 +23,25 @@ class Backend(object):
 
         Path to our PEM-encoded TLS client certificate.
 
-    .. attribute:: queue
-
-        Our :class:`~apns_worker.queue.NotificationQueue`.
-
     """
-    def __init__(self, manager, environment, key_path, cert_path):
-        self._manager = manager
+    def __init__(self, queue, environment, key_path, cert_path, error_handler):
+        self.queue = queue
         self.environment = environment
         self.key_path = key_path
         self.cert_path = cert_path
+        self._error_handler = error_handler
 
-    def start(self, queue):
+        queue._set_backend(self)
+
+    def start(self):
         """
-        Start processing notifications from the given queue.
+        Start processing notifications.
+        """
+        raise NotImplementedError()
+
+    def stop(self):
+        """
+        Stop processing notifications.
         """
         raise NotImplementedError()
 
@@ -40,16 +49,15 @@ class Backend(object):
         """
         Open the APNs feedback connection.
 
-        The callback should be called with an iterable of
-        :class:`~apns_worker.apns.Feedback` objects. The callback may be called
-        multiple times if the records are being loaded asynchronously.
+        The callback will be called zero or more times with a
+        :class:`~apns_worker.Feedback` object as the single argument.
 
         """
         raise NotImplementedError()
 
     def queue_lock(self):
         """
-        Return an object compatible with :class:`threading.Lock`.
+        Returns an object compatible with :class:`threading.Lock`.
         """
         raise NotImplementedError()
 
@@ -63,6 +71,12 @@ class Backend(object):
         """
         raise NotImplementedError()
 
+    def sleep(self, seconds):
+        """
+        Sleeps for the given number of seconds.
+        """
+        raise NotImplementedError()
+
     def delivery_error(self, error):
         """
         Reports a permanent error delivering a message.
@@ -72,4 +86,5 @@ class Backend(object):
         :type error: :class:`~apns_worker.apns.Error`.
 
         """
-        self._manager.delivery_error(error)
+        if self._error_handler is not None:
+            self._error_handler(error)

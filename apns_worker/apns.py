@@ -1,17 +1,23 @@
 from __future__ import unicode_literals, absolute_import
 
-from binascii import unhexlify
+from binascii import hexlify, unhexlify
 from calendar import timegm
 from collections import namedtuple
+from datetime import datetime, timedelta
 from importlib import import_module
 from itertools import repeat
 import json
+import logging
+from struct import unpack
 
 from six import python_2_unicode_compatible
 from six.moves import map, range
 
 from .data import Notification
 from .queue import NotificationQueue
+
+
+logger = logging.getLogger(__name__)
 
 
 class ApnsManager(object):
@@ -46,24 +52,23 @@ class ApnsManager(object):
                  backend_path='apns_worker.backend.threaded.Backend',
                  message_grace=5, error_handler=None):
 
-        self._backend = self._load_backend(backend_path, environment, key_path, cert_path)
-        self._queue = NotificationQueue(self._backend, grace=message_grace)
-        self._error_handler = error_handler
+        self._queue = NotificationQueue(grace=message_grace)
+        self._backend = self._load_backend(backend_path, environment, key_path, cert_path, error_handler)
 
-        self._backend.start(self._queue)
+        self._backend.start()
 
-    def _load_backend(self, path, environment, key_path, cert_path):
+    def _load_backend(self, path, environment, key_path, cert_path, error_handler):
         path, name = path.rsplit('.', 1)
         mod = import_module(path)
         backend_cls = getattr(mod, name)
 
-        return backend_cls(self, environment, key_path, cert_path)
+        return backend_cls(self._queue, environment, key_path, cert_path, error_handler)
 
     #
     # Client APIs
     #
 
-    def send_aps(self, tokens, alert=None, badge=None, sound=None, content_availble=None, category=None):
+    def send_aps(self, tokens, alert=None, badge=None, sound=None, content_available=None, category=None):
         """
         A convenience API to send a standard notification.
 
@@ -87,7 +92,7 @@ class ApnsManager(object):
             aps['badge'] = badge
         if sound is not None:
             aps['sound'] = sound
-        if content_availble:
+        if content_available:
             aps['content-available'] = 1
         if category is not None:
             aps['category'] = category
@@ -134,15 +139,6 @@ class ApnsManager(object):
 
         """
         self._backend.start_feedback(callback)
-
-    #
-    # Internal APIs
-    #
-
-    def delivery_error(self, error):
-        """ Called by the backend to pass an error up. """
-        if self._error_handler is not None:
-            self._error_handler(error)
 
 
 class Message(object):
@@ -298,3 +294,31 @@ class Feedback(namedtuple('Feedback', ['token', 'when'])):
         naive UTC datetime.
 
     """
+    _epoch = datetime(1970, 1, 1)
+
+    @classmethod
+    def parse(cls, buf):
+        """
+        Parses one Feedback object from the head of a byte string.
+
+        :returns: A two-tuple with the parsed :class:`~apns_worker.Feedback`
+            and the remaining bytes. The first element of the tuple will be
+            `None` if it could not be parsed.
+        :rtype: (:class:`~apns_worker.Feedback`, bytes)
+
+        """
+        feedback = None
+        remainder = buf
+
+        if len(buf) >= 6:
+            timestamp, token_len = unpack('!IH', buf[:6])
+            total_len = 6 + token_len
+
+            if len(buf) >= total_len:
+                token = hexlify(buf[6:total_len]).decode('ascii')
+                when = cls._epoch + timedelta(seconds=timestamp)
+
+                feedback = cls(token, when)
+                remainder = buf[total_len:]
+
+        return (feedback, remainder)

@@ -21,8 +21,8 @@ class QueueTestCase(unittest.TestCase):
     def setUp(self):
         super(QueueTestCase, self).setUp()
 
-        self.backend = TestBackend()
-        self.queue = NotificationQueue(self.backend, grace=10)
+        self.queue = NotificationQueue(grace=10)
+        self.backend = TestBackend(self.queue)
 
     def tearDown(self):
         del self.queue
@@ -205,8 +205,9 @@ class QueueTestCase(unittest.TestCase):
 
 
 class TestBackend(Backend):
-    def __init__(self):
+    def __init__(self, queue):
         self.lock = Condition()
+        queue._set_backend(self)
 
         # Statistics
         self.notifies = 0

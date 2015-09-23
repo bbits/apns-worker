@@ -1,5 +1,8 @@
-from binascii import hexlify
+from __future__ import unicode_literals
+
+from binascii import hexlify, unhexlify
 from collections import namedtuple
+from datetime import datetime, timedelta
 from itertools import takewhile, repeat
 import json
 import logging
@@ -10,17 +13,21 @@ from time import sleep
 import unittest
 
 import mock
-from six import BytesIO
+import six
 
 from apns_worker import ApnsManager, Message
+from apns_worker.backend.threaded import Connection
 
 
-_token1 = '0101010101010101010101010101010101010101010101010101010101010101'
-_token2 = '0202020202020202020202020202020202020202020202020202020202020202'
-_token3 = '0303030303030303030303030303030303030303030303030303030303030303'
+_token1 = '1111111111111111111111111111111111111111111111111111111111111111'
+_token2 = '2222222222222222222222222222222222222222222222222222222222222222'
+_token3 = '3333333333333333333333333333333333333333333333333333333333333333'
 
 
 class BackendTestCase(unittest.TestCase):
+    _when = datetime(2015, 9, 1)
+    _timestamp = int((_when - datetime(1970, 1, 1)).total_seconds())
+
     @classmethod
     def setUpClass(cls):
         super(BackendTestCase, cls).setUpClass()
@@ -36,8 +43,10 @@ class BackendTestCase(unittest.TestCase):
         self._connection_patch.start()
 
         self._apns = None
+        self.connection_inbuf = None
         self.connections = []
         self.apns_error = None
+        self.feedbacks = []
 
     def tearDown(self):
         if self._apns is not None:
@@ -50,7 +59,29 @@ class BackendTestCase(unittest.TestCase):
         super(BackendTestCase, self).tearDown()
 
     def test_wait_for_notification(self):
-        self.assertFalse(self.apns._backend.thread.connection.opened)
+        self.assertFalse(self.apns._backend.thread.connection.is_opened)
+
+    def test_send_aps(self):
+        kwargs = {
+            'alert': 'Alert!',
+            'badge': 5,
+            'sound': 'Meep Meep!',
+            'content_available': True,
+            'category': 'stuff',
+        }
+        self.apns.send_aps([_token1], **kwargs)
+
+        sleep(0.1)
+
+        frame = self.sent_frames[0]
+        payload = {'aps': {
+            'alert': 'Alert!',
+            'badge': 5,
+            'sound': 'Meep Meep!',
+            'content-available': 1,
+            'category': 'stuff',
+        }}
+        self.assertEqual(frame.decoded, payload)
 
     def test_send_notification(self):
         msg = Message([_token1], {'aps': {'badge': 1}})
@@ -74,7 +105,7 @@ class BackendTestCase(unittest.TestCase):
 
         sleep(0.1)
 
-        self.connection.set_read_error(struct.pack('!BBI', 8, 1, self.sent_frames[-1].ident))
+        self.connection.set_inbuf(struct.pack('!BBI', 8, 1, self.sent_frames[-1].ident))
 
         sleep(0.1)
 
@@ -89,7 +120,7 @@ class BackendTestCase(unittest.TestCase):
 
         sleep(0.1)
 
-        self.connection.set_read_error(struct.pack('!BBI', 8, 1, self.sent_frames[-2].ident))
+        self.connection.set_inbuf(struct.pack('!BBI', 8, 1, self.sent_frames[-2].ident))
 
         sleep(0.1)
 
@@ -104,7 +135,7 @@ class BackendTestCase(unittest.TestCase):
 
         sleep(0.1)
 
-        self.connection.set_read_error(struct.pack('!BBI', 8, 1, 100))
+        self.connection.set_inbuf(struct.pack('!BBI', 8, 1, 100))
 
         sleep(0.1)
 
@@ -119,7 +150,7 @@ class BackendTestCase(unittest.TestCase):
 
         sleep(0.1)
 
-        self.connection.set_read_error(struct.pack('!BBI', 8, 10, self.sent_frames[-2].ident))
+        self.connection.set_inbuf(struct.pack('!BBI', 8, 10, self.sent_frames[-2].ident))
 
         sleep(0.1)
 
@@ -134,7 +165,7 @@ class BackendTestCase(unittest.TestCase):
 
         sleep(0.1)
 
-        self.connection.set_read_error(socket.error("Test error"))
+        self.connection.set_inbuf(socket.error("Test error"))
 
         sleep(0.1)
 
@@ -160,18 +191,79 @@ class BackendTestCase(unittest.TestCase):
         self.assertEqual(self.sent_tokens, [_token1])
         self.assertEqual(self.apns_error, None)
 
+    def test_flush(self):
+        self.apns.send_aps([_token1], badge=1)
+        self.apns.flush_messages()
+
+        self.assertTrue(self.apns._queue.is_empty())
+
+    def test_feedback_empty(self):
+        self.connection_inbuf = b''
+        self.apns.get_feedback(self.handle_feedback)
+
+        sleep(0.1)
+
+        self.assertEqual(len(self.feedbacks), 0)
+
+    def test_feedback_partial(self):
+        self.connection_inbuf = struct.pack('!IH30s', self._timestamp, 32, unhexlify(_token1))
+        self.apns.get_feedback(self.handle_feedback)
+
+        sleep(0.1)
+
+        self.assertEqual(len(self.feedbacks), 0)
+
+    def test_feedback_single(self):
+        self.connection_inbuf = struct.pack('!IH32s', self._timestamp, 32, unhexlify(_token1))
+        self.apns.get_feedback(self.handle_feedback)
+
+        sleep(0.1)
+
+        self.assertEqual(len(self.feedbacks), 1)
+        self.assertEqual(self.feedbacks[0].token, _token1)
+        self.assertEqual(self.feedbacks[0].when, self._when)
+
+    def test_feedback_remainder(self):
+        self.connection_inbuf = struct.pack('!IH32sI', self._timestamp, 32, unhexlify(_token1), 0)
+        self.apns.get_feedback(self.handle_feedback)
+
+        sleep(0.1)
+
+        self.assertEqual(len(self.feedbacks), 1)
+        self.assertEqual(self.feedbacks[0].token, _token1)
+        self.assertEqual(self.feedbacks[0].when, self._when)
+
+    def test_feedback_multiple(self):
+        self.connection_inbuf = struct.pack(
+            '!IH32sIH32sI',
+            self._timestamp, 32, unhexlify(_token1),
+            self._timestamp + 1, 32, unhexlify(_token2),
+            0)
+        self.apns.get_feedback(self.handle_feedback)
+
+        sleep(0.1)
+
+        self.assertEqual(len(self.feedbacks), 2)
+        self.assertEqual(self.feedbacks[0].token, _token1)
+        self.assertEqual(self.feedbacks[0].when, self._when)
+        self.assertEqual(self.feedbacks[1].token, _token2)
+        self.assertEqual(self.feedbacks[1].when, self._when + timedelta(seconds=1))
+
     #
     # Hooks
     #
 
     def new_connection(self, *args, **kwargs):
-        connection = TestConnection(self)
+        connection = TestConnection(self, self.connection_inbuf)
         self.connections.append(connection)
 
         return connection
 
     def handle_error(self, error):
         self.apns_error = error
+
+    def handle_feedback(self, feedback):
+        self.feedbacks.append(feedback)
 
     #
     # State
@@ -183,7 +275,7 @@ class BackendTestCase(unittest.TestCase):
             self._apns = ApnsManager(
                 'key-path', 'cert-path',
                 backend_path='apns_worker.backend.threaded.Backend',
-                error_handler=self.handle_error
+                message_grace=0.1, error_handler=self.handle_error
             )
 
         return self._apns
@@ -194,11 +286,11 @@ class BackendTestCase(unittest.TestCase):
 
     @property
     def connections_opened(self):
-        return len([c for c in self.connections if c.opened])
+        return len([c for c in self.connections if c.is_opened])
 
     @property
     def connections_closed(self):
-        return len([c for c in self.connections if c.closed])
+        return len([c for c in self.connections if c.is_closed])
 
     @property
     def sent_tokens(self):
@@ -216,39 +308,54 @@ class BackendTestCase(unittest.TestCase):
         return [frame for connection in self.connections for frame in connection.sent_frames]
 
 
-class TestConnection(object):
+class TestConnection(Connection):
     """ A fake apns_worker.backend.threaded.Connection. """
-    def __init__(self, test_case):
+    def __init__(self, test_case, inbuf=None):
         self.test_case = test_case
 
-        self.outbuf = BytesIO()
-
-        self.read_err = None
+        self.outbuf = six.BytesIO()
+        self.inbuf = inbuf
         self.write_exc = None
 
+        self._close_on_empty = (inbuf is not None)
+
         self.cond = Condition()
-        self.opened = False
-        self.closed = False
+        self._is_opened = False
+        self._is_closed = False
 
         self._sent_frames = None
 
     def __copy__(self):
         return self.test_case.new_connection()
 
+    @property
+    def is_opened(self):
+        return self._is_opened
+
     def connect(self):
-        self.opened = True
+        self.is_opened = True
 
-        return (not self.closed)
+        return (not self._is_closed)
 
-    def recv(self, bufsize):
-        self.opened = True
+    def recv(self, bufsize=4096):
+        """
+        This always returns one byte at a time to make sure we're looping
+        properly.
+        """
+        self._is_opened = True
 
         with self.cond:
-            while (not self.closed) and (self.read_err is None):
+            while self.inbuf is None:
                 self.cond.wait()
 
-            val = self.read_err or b''
-            self.read_err = None
+            if isinstance(self.inbuf, Exception):
+                val = self.inbuf
+                self.inbuf = None
+            else:
+                val = self.inbuf[:1]
+                self.inbuf = self.inbuf[1:] if (len(self.inbuf) > 1) else None
+                if (self.inbuf is None) and self._close_on_empty:
+                    self.close()
 
         if isinstance(val, Exception):
             raise val
@@ -256,10 +363,10 @@ class TestConnection(object):
             return val
 
     def sendall(self, buf):
-        if self.closed:
+        if self._is_closed:
             return 0
 
-        self.opened = True
+        self._is_opened = True
         self._sent_frames = None
 
         err = self.write_exc
@@ -271,17 +378,18 @@ class TestConnection(object):
 
     def close(self):
         with self.cond:
-            self.closed = True
+            self._is_closed = True
+            self.inbuf = b''
             self.cond.notify_all()
 
     #
     # Test methods
     #
 
-    def set_read_error(self, val):
+    def set_inbuf(self, val):
         """ Send data or an exception to the read thread. """
         with self.cond:
-            self.read_err = val
+            self.inbuf = val
             self.cond.notify_all()
 
     def set_write_exc(self, exc):
@@ -292,7 +400,7 @@ class TestConnection(object):
     def sent_frames(self):
         """ Returns Frame objects representing sent frames. """
         if self._sent_frames is None:
-            stream = BytesIO(self.outbuf.getvalue())
+            stream = six.BytesIO(self.outbuf.getvalue())
             self._sent_frames = list(takewhile(lambda f: f is not None, (Frame.parse(stream) for i in repeat(None))))
 
         return self._sent_frames
