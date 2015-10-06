@@ -455,4 +455,4 @@ class Frame(namedtuple('Frame', ['token', 'payload', 'ident', 'expiration', 'pri
 
     @property
     def decoded(self):
-        return json.loads(self.payload)
+        return json.loads(self.payload.decode('utf-8'))

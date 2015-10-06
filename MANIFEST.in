@@ -1,6 +1,7 @@
-include README.md LICENSE CHANGES tox.ini
+include README.rst LICENSE CHANGES.rst tox.ini
 
 include apns_worker/certs/*
 
-recursive-include doc
-prune doc/build
+recursive-include doc *
+prune doc/_build
+global-exclude .DS_Store

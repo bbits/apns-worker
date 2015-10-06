@@ -44,7 +44,7 @@ class ApnsManager(object):
 
     :param error_handler: An optional function to process delivery errors. The
         function should take one argument, which will be an
-        :class:`~apns_worker.apns.Error`.
+        :class:`~apns_worker.Error`.
 
     """
     def __init__(self, key_path, cert_path,
@@ -74,15 +74,19 @@ class ApnsManager(object):
 
         If you're sending a simple notification with a standard payload, you
         can use this shortcut API instead of constructing a :class:`Message`
-        manually. Specify any arguments that you wish to include in the `'aps'`
-        dictionary of the payload.
+        manually. Specify any arguments that you wish to include in the `'aps'
+        dictionary
+        <https://developer.apple.com/library/ios/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Chapters/ApplePushService.html#//apple_ref/doc/uid/TP40008194-CH100-SW1>`_
+        of the payload.
 
+        :param tokens:
         :type tokens: list of str
+        :param alert:
         :type alert: str or dictionary
-        :type badge: int
-        :type sound: str
-        :type content_available: bool
-        :type category: str
+        :param int badge:
+        :param str sound:
+        :param bool content_available:
+        :param str category:
 
         """
         aps = {}
@@ -118,7 +122,7 @@ class ApnsManager(object):
         (according to the delivery grace period).
 
         The only reason to call this is to make sure the queue is empty before
-        terminating a process.
+        allowing a process to terminate.
 
         """
         delay = self._queue.purge_expired()
@@ -133,9 +137,9 @@ class ApnsManager(object):
         This will deliver :class:`~apns_worker.apns.Feedback` items to the
         callback asynchronously.
 
-        :param callback: A function that takes an iterable of
-            :class:`~apns_worker.apns.Feedback` objects. The callback may be
-            invoked multiple times.
+        :param callback: A function that takes a single
+            :class:`~apns_worker.apns.Feedback` object. The callback will be
+            called zero or more times.
 
         """
         self._backend.start_feedback(callback)
@@ -291,7 +295,8 @@ class Feedback(namedtuple('Feedback', ['token', 'when'])):
     .. attribute:: when
 
         The time at which this device stopped receiving notifications as a
-        naive UTC datetime.
+        naive UTC datetime. If the device was registered with your service
+        after this time, you can ignore this feedback.
 
     """
     _epoch = datetime(1970, 1, 1)
