@@ -56,6 +56,10 @@ html:
 	@echo
 	@echo "Build finished. The HTML pages are in $(BUILDDIR)/html."
 
+zip:
+	rm _build/html.zip || true
+	cd _build/html && zip -R ../html.zip '*' -x .buildinfo -x '_sources/*'
+
 dirhtml:
 	$(SPHINXBUILD) -b dirhtml $(ALLSPHINXOPTS) $(BUILDDIR)/dirhtml
 	@echo

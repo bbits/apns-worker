@@ -2,7 +2,7 @@ apns-worker
 ===========
 
 This is a client library for Apple's push notification service. It is not the
-first such library for Python, but, as if often the way, the existing options
+first such library for Python, but, as is often the way, the existing options
 didn't quite meet our needs:
 
 #. **No dependencies** (other than six).
@@ -17,10 +17,9 @@ Quick start
 
 An APNs client is by nature stateful. The default apns-worker backend uses
 Python threads to asynchronously process a queue of messages to send to the
-service. Most users will want to maintain a global
-:class:`~apns_worker.ApnsManager` instance to process messages. Note that if
-your own program is threaded, you may need to take care to create this global
-instance safely.
+service. Most users will want to maintain a global ApnsManager instance to
+process messages. Note that if your own program is threaded, you may need to
+take care to create this global instance safely.
 
 ::
 
