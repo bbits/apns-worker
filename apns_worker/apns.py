@@ -107,9 +107,10 @@ class ApnsManager(object):
 
     def send_message(self, message):
         """
-        Queue a message for delivery.
+        Queues a message for delivery.
 
-        :type message: :class:`~apns_worker.apns.Message`
+        :param message:
+        :type message: :class:`~apns_worker.Message`
 
         """
         self._queue.append(message)
@@ -134,12 +135,12 @@ class ApnsManager(object):
         """
         Start retrieving tokens from the APNs feedback service.
 
-        This will deliver :class:`~apns_worker.apns.Feedback` items to the
-        callback asynchronously.
+        This will deliver :class:`~apns_worker.Feedback` items to the callback
+        asynchronously.
 
         :param callback: A function that takes a single
-            :class:`~apns_worker.apns.Feedback` object. The callback will be
-            called zero or more times.
+            :class:`~apns_worker.Feedback` object. The callback will be called
+            zero or more times.
 
         """
         self._backend.start_feedback(callback)
@@ -248,7 +249,7 @@ class Error(namedtuple('Error', ['status', 'message', 'token'])):
 
     .. attribute:: message
 
-        The :class:`~apns_worker.apns.Message` that generated the error.
+        The :class:`~apns_worker.Message` that generated the error.
 
     .. attribute:: token
 

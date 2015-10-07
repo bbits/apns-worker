@@ -46,10 +46,8 @@ Creating a Message also allows you to set the expiration and priority.
 Handling errors
 ---------------
 
-apns-worker takes care of all of the logistics of detecting delivery errors and
-re-sending as necessary. When creating your :class:`~apns_worker.ApnsManager`
-instance, you can provide a callback to receive errors for logging or other
-action::
+When creating your :class:`~apns_worker.ApnsManager` instance, you can provide a
+callback to be notified of permanent delivery errors for your notifications::
 
     import logging
 
@@ -70,7 +68,7 @@ Getting feedback
 ----------------
 
 The feedback service identifies device tokens that are no longer available to
-accept notifications, usually because the app has been uninstalled. You should
+accept notifications, such as when the app has been uninstalled. You should
 check for feedback daily with :meth:`~apns_worker.ApnsManager.get_feedback` and
 remove these device tokens from your database. For example, a Django app might
 do the following in a daily task::

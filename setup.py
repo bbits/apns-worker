@@ -1,4 +1,5 @@
 from setuptools import setup
+import sys
 
 
 setup(
@@ -17,7 +18,5 @@ setup(
     zip_safe=False,
 
     test_suite='apns_worker.tests',
-    tests_require=[
-        'mock',
-    ],
+    tests_require=['mock'] if sys.version_info < (3, 3) else [],
 )

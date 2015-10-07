@@ -2,6 +2,7 @@ from __future__ import unicode_literals, absolute_import
 
 from collections import deque
 from datetime import timedelta
+from threading import RLock
 
 from six.moves import map, range
 
@@ -15,11 +16,8 @@ class NotificationQueue(object):
     When a notification is claimed from the queue, we retain a reference to it
     with an expiration. Once expired, sent notifications are eventually purged.
     However, if a delivery failure is subsequently detected, the
-    :meth:`backtrack` method can be used to rewind the queue to the first
-    notification that failed.
-
-    :param backend: A :cls:`~apns_worker.backend.base.Backend` to provide
-        synchronization mechanisms.
+    :meth:`~apns_worker.queue.NotificationQueue.backtrack` method can be used
+    to rewind the queue to the first notification that failed.
 
     :param int grace: Seconds to leave a claimed notification in the queue
         before purging it.
@@ -31,6 +29,7 @@ class NotificationQueue(object):
         self._queue = deque()
         self._next = 0
         self._idents = _gen_identifiers()
+        self._backend = self.DummyBackend()
 
         self._auto_purge_at = now() + timedelta(seconds=grace)
 
@@ -39,7 +38,7 @@ class NotificationQueue(object):
         Queues a message for delivery.
 
         :param message: A single message to queue for delivery.
-        :type message: :cls:`~apns_worker.apns.Message`.
+        :type message: :class:`~apns_worker.Message`
 
         """
         with self._backend.queue_lock():
@@ -53,7 +52,9 @@ class NotificationQueue(object):
         Returns the next notification to be sent.
 
         The returned notification is provisionally removed from the queue, but
-        can be restored with a timely call to :meth:`backtrack`.
+        can be restored with a timely call to
+        :meth:`~apns_worker.queue.NotificationQueue.backtrack` or
+        :meth:`~apns_worker.queue.NotificationQueue.unclaim`.
 
         :rtype: :class:`~apns_worker.data.Notification`.
 
@@ -73,7 +74,7 @@ class NotificationQueue(object):
         """
         Restores the most recently claimed notification to the queue.
 
-        :type notification: :class:`~apns_worker.data.Notification`.
+        :type notification: :class:`~apns_worker.data.Notification`
 
         :returns: `True` if the notification could be unclaimed, `False`
             otherwise.
@@ -92,17 +93,16 @@ class NotificationQueue(object):
 
             return success
 
-    def backtrack(self, ident, inclusive=False):
+    def backtrack(self, ident):
         """
         Returns claimed notifications to the queue.
 
-        All notifications after (and optionally including) `ident` are known to
-        have failed and need to be re-queued. All notifications before `ident`
-        are now known to have succeeded.
+        All notifications after `ident` are known to have failed and need to be
+        re-queued. All notifications before `ident` are now known to have
+        succeeded.
 
-        :param int ident: Ident of the first failed notification.
-        :param bool inclusive: True if the identified notification should be
-            retried. False to abandon it and restart with the next one.
+        :param int ident: Ident of the first failed (or last successful)
+            notification.
 
         :returns: The notification with the given ident, if found.
         :rtype: :class:`~apns_worker.data.Notification` or None.
@@ -121,9 +121,7 @@ class NotificationQueue(object):
 
             if i < len(queue) and (queue[i].notification.ident == ident):
                 notification = queue[i].notification
-                # Optionally skip over the one that failed.
-                if (not inclusive):
-                    i += 1
+                i += 1
 
             # Everything else either succeeded or failed permanently.
             for j in range(i):
@@ -182,7 +180,8 @@ class NotificationQueue(object):
         Returns `True` if the queue has no items.
 
         This includes claimed and unclaimed items. Use this with
-        :meth:`purge_expired` to wait for a decommissioned queue to drain.
+        :meth:`~apns_worker.queue.NotificationQueue.purge_expired` to wait for
+        a decommissioned queue to drain.
 
         :rtype: bool
 
@@ -195,6 +194,16 @@ class NotificationQueue(object):
     #
     # Internal
     #
+
+    class DummyBackend(object):
+        def __init__(self):
+            self.lock = RLock()
+
+        def queue_lock(self):
+            return self.lock
+
+        def queue_notify(self):
+            pass
 
     def _set_backend(self, backend):
         self._backend = backend

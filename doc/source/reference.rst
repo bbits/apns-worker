@@ -22,3 +22,12 @@ For users
 
 For backend developers
 ----------------------
+
+.. autoclass:: apns_worker.backend.base.Backend
+    :members:
+
+.. autoclass:: apns_worker.queue.NotificationQueue
+    :members:
+
+.. autoclass:: apns_worker.data.Notification
+    :members:

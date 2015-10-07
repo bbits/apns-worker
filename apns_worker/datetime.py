@@ -19,9 +19,12 @@ def _now():
 def Now(dt):
     """ A context processor that sets the current datetime. """
     from datetime import date, time, datetime
-    from mock import patch
+    try:
+        from unittest import mock
+    except ImportError:
+        import mock
 
     if isinstance(dt, date) and not isinstance(dt, datetime):
         dt = datetime.combine(dt, time(0))
 
-    return patch('{}._now'.format(__name__), lambda: dt)
+    return mock.patch('{}._now'.format(__name__), lambda: dt)

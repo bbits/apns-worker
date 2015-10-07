@@ -14,8 +14,8 @@ class Notification(object):
     """
     An internal representation of a single notification to send.
 
-    ;param message: The original message.
-    :type message: :cls:`apns_worker.apns.Message`
+    :param message: The original message.
+    :type message: :class:`apns_worker.Message`
 
     :param bytes encoded_token: Binary representation of a device token.
     :param int ident: 32-bit notification identifier.

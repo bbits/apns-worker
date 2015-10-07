@@ -12,7 +12,11 @@ from threading import Condition
 from time import sleep
 import unittest
 
-import mock
+try:
+    from unittest import mock
+except ImportError:
+    import mock
+
 import six
 
 from apns_worker import ApnsManager, Message

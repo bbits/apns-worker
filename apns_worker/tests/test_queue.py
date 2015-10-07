@@ -108,25 +108,12 @@ class QueueTestCase(unittest.TestCase):
         self.assertEqual(self.queue._next, 0)
 
     def test_backtrack_all(self):
-        message = Message([_token1, _token2], {})
-
-        self.queue.append(message)
-        self.queue.claim()
-        self.queue.claim()
-        self.queue.backtrack(0, inclusive=True)
-
-        self.assertEqual(len(self.queue._queue), 2)
-        self.assertEqual(self.queue._next, 0)
-        self.assertTrue(all(item.expires is None for item in self.queue._queue))
-        self.assertEqual(self.backend.notifies, 2)
-
-    def test_backtrack_exclusive(self):
         message = Message([_token1, _token2, _token3], {})
 
         self.queue.append(message)
         self.queue.claim()
         self.queue.claim()
-        self.queue.backtrack(0, inclusive=False)
+        self.queue.backtrack(0)
 
         self.assertEqual(len(self.queue._queue), 2)
         self.assertEqual(self.queue._next, 0)
@@ -212,6 +199,15 @@ class TestBackend(Backend):
         # Statistics
         self.notifies = 0
 
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def start_feedback(self):
+        pass
+
     def queue_lock(self):
         return self.lock
 
@@ -219,3 +215,6 @@ class TestBackend(Backend):
         self.notifies += 1
 
         self.lock.notify_all()
+
+    def sleep(self):
+        pass
