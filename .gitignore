@@ -1,6 +1,7 @@
-.eggs
-.tox
 *.egg-info
 .coverage
-dist
-doc/_build
+.eggs
+.tox
+build/
+dist/
+doc/_build/
